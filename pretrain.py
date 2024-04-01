@@ -11,7 +11,7 @@ import wandb
 
 if __name__ == "__main__":
     # ***** Hyperparameter *****
-    epochs = 100
+    epochs = 10
     batch_size = 32
     learning_rate=0.001
     embedding_dim = 512
@@ -109,7 +109,7 @@ if __name__ == "__main__":
             eval_results = tensor_text_to_video_metrics(sim_matrix)
             formatted_eval_results = {k: "{:.2f}".format(v) for k, v in eval_results.items()}
             print("Evaluation Metrics:", formatted_eval_results)
-            wandb.log(eval_results, step=epoch)
+            wandb.log({f"metric/{key}": value for key, value in eval_results.items()}, step=epoch)
             
 
         

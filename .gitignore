@@ -1,3 +1,4 @@
 Feature_extractor/
 test_data/
 Video_datasets_downloader/
+wandb/
