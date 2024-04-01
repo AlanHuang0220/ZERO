@@ -8,45 +8,33 @@ from transformers import AutoTokenizer
 import random
 from typing import List
 
-class CustomDataset(Dataset):
-    def __init__(self, dataset_folder, encoders: List[str], device=None):
+class VAST27MDataset(Dataset):
+    def __init__(self, dataset_folder, features_to_load: List[str], captions_to_load: List[str]):
         self.dataset_folder = dataset_folder
         self.clip_ids = os.listdir(dataset_folder)
-        self.encoders = encoders
-        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.features_to_load = features_to_load
+        self.captions_to_load = captions_to_load
 
     def __len__(self):
         return len(self.clip_ids)
 
     def __getitem__(self, idx):
         data = {}
-        for encoder in self.encoders:
-            feature_file_path = os.path.join(self.dataset_folder, self.clip_ids[idx], f"{encoder}.pkl")
+        for encode_model_name in self.features_to_load:
+            feature_file_path = os.path.join(self.dataset_folder, self.clip_ids[idx], f"{encode_model_name}.pkl")
             with open(feature_file_path, 'rb') as f:
                     feature = pickle.load(f)
-                    data[f'{encoder}_feature'] = feature.to(self.device)
+                    data[f'{encode_model_name}_feature'] = feature
 
         caption_file_path = os.path.join(self.dataset_folder, self.clip_ids[idx], "caption.json")
         with open(caption_file_path, 'r') as f:
             metadata = json.load(f)
-            data.update(metadata)
+            for caption in self.captions_to_load:
+                if caption in metadata:
+                    data[caption] = metadata[caption]
+
         return data
     
-# def collate_fn(batch):
-#     collated_batch = {}
-#     for key in list(batch[0].keys()):
-#         if key.endswith('feature'):
-#             features = [torch.from_numpy(item[key]) for item in batch]
-#             features_padded = torch.nn.utils.rnn.pad_sequence(features, batch_first=True, padding_value=0)
-#             collated_batch[key] = features_padded
-#         elif key in ['vision_cap', 'audio_cap', 'subtitle', 'vast_cap']:
-
-
-#     media_mask = np.where(np.all(collated_batch['visual_feature'].numpy() == 0, axis=2), True, False)
-#     media_mask = torch.from_numpy(media_mask)
-#     collated_batch['media_mask'] = media_mask
-
-#     return collated_batch
 
 class CustomCollateFn:
     def __init__(self, tokenizer):
@@ -59,7 +47,7 @@ class CustomCollateFn:
                 features = [torch.from_numpy(item[key]) for item in batch]
                 features_padded = torch.nn.utils.rnn.pad_sequence(features, batch_first=True, padding_value=0)
                 collated_batch[key] = features_padded
-                collated_batch[f'{key}_mask'] = torch.from_numpy(np.where(np.all(collated_batch['vision_feature'].numpy() == 0, axis=2), True, False))
+                collated_batch[f'{key}_mask'] = torch.from_numpy(np.where(np.all(collated_batch[key].numpy() == 0, axis=2), True, False))
 
             elif key in ['vision_cap', 'audio_cap']:
                 choise_caption = [item[key][random.randint(0, len(item[key]) - 1)] for item in batch] #從多個caption中隨機選擇一個
