@@ -1,19 +1,18 @@
 import numpy as np
 import torch
 
-# def cosine_similarity_matrix(v1, v2):
-#     v1_norm = v1 / np.linalg.norm(v1, axis=1, keepdims=True)
-#     v2_norm = v2 / np.linalg.norm(v2, axis=1, keepdims=True)
-
-#     similarity = np.dot(v1_norm, v2_norm.T)
-#     return similarity
-
 def cosine_similarity_matrix(x1, x2):
-    # 正规化向量
+    """
+    Compute the cosine similarity matrix between two sets of vectors.
+    args:
+        x1: torch.Tensor of shape (N, D)
+        x2: torch.Tensor of shape (M, D)
+    returns:
+        torch.Tensor of shape (N, M)
+    """
     x1_norm = x1 / x1.norm(dim=1, keepdim=True)
     x2_norm = x2 / x2.norm(dim=1, keepdim=True)
     
-    # 计算相似度矩阵
     sim_matrix = torch.mm(x1_norm, x2_norm.t())
     return sim_matrix
 
@@ -79,13 +78,3 @@ def tensor_video_to_text_sim(sim_tensor):
     # Forms a similarity matrix for use with rank at k
     values, _ = torch.max(sim_tensor, dim=1, keepdim=True)
     return torch.squeeze(values).T
-
-
-# Example
-# sim_matrix = cosine_similarity_matrix(vision_cls, text_cls).detach().numpy()
-# print(compute_metrics(sim_matrix))
-# vision_cls, text_cls = vision_representation[:, 1, :], text_repreaentation[:, 1, :]
-# sim_matrix = cosine_similarity_matrix(vision_cls, text_cls).unsqueeze(0)
-# results = tensor_text_to_video_metrics(sim_matrix)
-# formatted_results = {k: "{:.2f}".format(v) for k, v in results.items()}
-# print(formatted_results)

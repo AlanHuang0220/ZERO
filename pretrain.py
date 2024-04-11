@@ -1,48 +1,45 @@
 import torch
-from torch.utils.data import DataLoader, Subset
-from transformers import AutoTokenizer
-from Dataset import CustomCollateFn, VAST27MDataset
-from Model import BaselineZERO
-from  torch import optim
-import torch.nn.functional as F
-from sklearn.model_selection import train_test_split
-from Metrics import cosine_similarity_matrix, tensor_text_to_video_metrics, compute_metrics
-import wandb
+from torch.utils.data import DataLoader
+from Dataset.Dataset import CustomCollateFn, VAST27MDataset
+from Model import ModalSpecZERO, BaselineZERO
+from torch import optim
+from tqdm import tqdm
+from Metrics import tensor_text_to_video_metrics, cosine_similarity_matrix
+
 
 if __name__ == "__main__":
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
     # ***** Hyperparameter *****
-    epochs = 10
-    batch_size = 32
+    epochs = 1000
+    batch_size = 2
     learning_rate=0.001
     embedding_dim = 512
-    num_heads = 2
+    num_heads = 8
     ff_hidden_dim = 1024
-    learnable_token_num = 10
-    dropout = 0
-    num_block = 2
+    learnable_token_num = 100
+    dropout = 0.1
+    num_block = 16
     max_seq_len = 200
     temperature=0.1
     features_to_load = ['CLIP']
-    captions_to_load = ['vision_cap']
-    dataset_folder = r'D:\Zero\test_data'
-    shuffle = False
+    captions_to_load = ['vast_cap']
+    # dataset_folder = "/home/miislab-server2/Alan/Alan_shared/VAST27M/video_feature"
+    dataset_folder = "./test_data"
     t_max = 100
+    best_eval_loss = float('inf')
     # ***** Hyperparameter *****
 
-    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-xl")
-    collate_fn = CustomCollateFn(tokenizer)
+    dataset = VAST27MDataset(dataset_folder=dataset_folder, features_to_load=features_to_load, captions_to_load=captions_to_load, test_size=0.1, random_state=42)
 
-    full_dataset = VAST27MDataset(dataset_folder=dataset_folder, features_to_load=features_to_load, captions_to_load=captions_to_load)
-    train_idx, eval_idx = train_test_split(list(range(len(full_dataset))), test_size=0.1, random_state=42)
+    collate_fn = CustomCollateFn(tokenizer_model_name='google/flan-t5-xl', use_fast=True)
+    tokenizer = collate_fn.get_tokenizer()
 
-    # 創建訓練集和評估集的Subset
-    train_subset = Subset(full_dataset, train_idx)
-    eval_subset = Subset(full_dataset, eval_idx)
+    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    # eval_loader = DataLoader(dataset.eval_subset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
-    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True, collate_fn=collate_fn)
-    eval_loader = DataLoader(eval_subset, batch_size=16, shuffle=False, collate_fn=collate_fn)
-
-    model = BaselineZERO(
+    model = ModalSpecZERO(
         embedding_dim=embedding_dim, 
         num_heads=num_heads, 
         ff_hidden_dim=ff_hidden_dim, 
@@ -51,65 +48,88 @@ if __name__ == "__main__":
         num_block=num_block, 
         max_seq_len=max_seq_len,
         temperature=temperature
-    )
+    ).to(device)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total number of model parameters: [bold]{total_params}[/bold]")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max)
-
-    # 初始化 Weights & Biases
-    wandb.init(project='ZERO', entity='alan0220', name='BaselineZERO_experiment')
+    lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
+    # for i, batch in enumerate(train_loader):
+    #     if i == 5:
+    #         nth_batch = batch
+    #         break
+    # print(nth_batch['clip_id'])
 
     for epoch in range(epochs):
         model.train()
         total_train_loss = 0.0
 
-        for batch in train_loader:
-            vision_representation, text_repreaentation, loss = model(
-                batch['CLIP_feature'], batch['vision_cap'], batch['CLIP_feature_mask'], batch['vision_cap_mask']
-            )
-            # vision_cls, text_cls = vision_representation[:, 1, :], text_repreaentation[:, 1, :]
-            # sim_matrix = cosine_similarity_matrix(vision_cls, text_cls).unsqueeze(0)
-            # results = tensor_text_to_video_metrics(sim_matrix)
-            # formatted_results = {k: "{:.2f}".format(v) for k, v in results.items()}
-            # print(formatted_results)
+        train_loop = tqdm(train_loader, leave=True)
+        for batch in train_loop:
+            # print(batch.keys())
+            train_loop.set_description(f"Epoch [{epoch+1}/{epochs}]")
 
-            # # Backward pass and optimize
+            vision_learnable_token_output, text_learnable_token_output= model(
+                batch['CLIP_feature'].to(device), 
+                batch['vast_cap'].to(device), 
+                batch['CLIP_feature_mask'].to(device), 
+                batch['vast_cap_mask'].to(device)
+            )
+            # _, loss = model.calculate_lm_loss(batch['vast_cap'].to(device), vision_learnable_token_output, tokenizer)
+            # print(type(batch['CLIP_feature']))
+            loss = model.calculate_mlm_loss(batch['CLIP_feature'].to(device), batch['CLIP_feature_mask'].to(device), text_learnable_token_output, mask_ratio=0.15)
+            # print(loss.item())
+            # masked_feature, mask = model.random_feature_masking(batch['CLIP_feature'].to(device))
+            # print(masked_feature)
+            # print(mask)
+            # print(loss)
+            # Backward pass and optimize
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            lr_scheduler.step()
 
             total_train_loss += loss.item()
+            train_loop.set_postfix(loss=loss.item())
             # for name, param in model.named_parameters():
             #     if param.grad is not None:
             #         print(f'Gradient for {name}:')
             #         print(param.grad)
-            average_loss = total_train_loss / len(train_loader)
-            print(f"Epoch [{epoch+1}/{epochs}] - Loss: {average_loss:.4f}")
-            wandb.log({"Train Loss": average_loss}, step=epoch)
+        lr_scheduler.step()
+        average_loss = total_train_loss / len(train_loader)
+        tqdm.write(f"Epoch [{epoch+1}/{epochs}] - Loss: {average_loss:.4f}")
         
-        model.eval()
-        total_eval_loss = 0.0
+        # model.eval()
+        # total_eval_loss = 0.0
 
-        with torch.no_grad():  # 關閉梯度
-            for batch in eval_loader:
-                vision_representation, text_representation, loss = model(
-                    batch['CLIP_feature'], batch['vision_cap'], batch['CLIP_feature_mask'], batch['vision_cap_mask']
-                )
-                
-                total_eval_loss += loss.item()
+        # with torch.no_grad():
+        #     # for batch in train_loader:
+        #     vision_representation, text_representation = model(
+        #         nth_batch['CLIP_feature'].to(device), 
+        #         nth_batch['vast_cap'].to(device), 
+        #         nth_batch['CLIP_feature_mask'].to(device), 
+        #         nth_batch['vast_cap_mask'].to(device)
+        #     )
+            # total_eval_loss += loss.item()
             
-            average_eval_loss = total_eval_loss / len(eval_loader)
-            print(f"Eval Loss: {average_eval_loss:.4f}")
-            wandb.log({"Eval Loss": average_eval_loss}, step=epoch)
-            
+        #     text_output, loss = model.calculate_lm_loss(nth_batch['vast_cap'].to(device), vision_representation, tokenizer)
+        #     _, text_output_ids = torch.max(text_output, dim=-1)
+        #     result = tokenizer.decode(text_output_ids[0])
+        #     tqdm.write(result)
 
-            vision_cls, text_cls = vision_representation[:, 1, :], text_repreaentation[:, 1, :]
-            sim_matrix = cosine_similarity_matrix(vision_cls, text_cls).unsqueeze(0)
-            eval_results = tensor_text_to_video_metrics(sim_matrix)
-            formatted_eval_results = {k: "{:.2f}".format(v) for k, v in eval_results.items()}
-            print("Evaluation Metrics:", formatted_eval_results)
-            wandb.log({f"metric/{key}": value for key, value in eval_results.items()}, step=epoch)
+
+            # cos_sim = cosine_similarity_matrix(vision_representation[:,1,:], text_representation[:,1,:]).unsqueeze(0)
+            # # print(cos_sim)
+            # result = tensor_text_to_video_metrics(cos_sim.cpu())
+            # print(result)
+
             
+            # average_eval_loss = total_eval_loss / len(train_loader)
+            # tqdm.write(f"Eval Loss: {average_eval_loss:.4f}")
+
+        # if average_eval_loss < best_eval_loss:
+        #     best_eval_loss = average_eval_loss
+        #     torch.save(model.state_dict(), 'best_model.pth')
+        #     tqdm.write("Saved Best Model!")
+
 
         

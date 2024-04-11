@@ -1,57 +1,57 @@
-training_dataset:
-  type: CustomDataset
+experiment:
   args:
-    folder: '/home/miislab-server/Alan/Alan_shared/MovieNet/feature'
+    project: ZERO
+    entity: alan0220
+    name: ModalSpecZERO_infonce_30learnable_token #每次實驗應該更改 
 
-val_dataset:
-  type: CustomDataset
+dataset:
+  type: VAST27MDataset
   args:
-    folder: '/home/miislab-server/Alan/Alan_shared/MovieNet/val_feature'
+    dataset_folder: /home/miislab-server2/Alan/dataset/vast27m/video_feature
+    features_to_load: ['CLIP']
+    captions_to_load: ['vision_cap']
+    test_size: 0.1 # test data的比例
+    random_state: 42  # 分割資料集的隨機種子
 
-data_loader:
+collate_fn:
+  type: CustomCollateFn
+  args: 
+    tokenizer_model_name: google/flan-t5-xl
+    use_fast: True
+
+train_loader:
   type: DataLoader
   args:
-    batch_size: 64
-    shuffle: true
-    num_workers: 16
+    batch_size: 128
+    num_workers: 8
+    pin_memory: True
+    shuffle: True
+
+eval_loader:
+  type: DataLoader
+  args:
+    batch_size: 128
+    num_workers: 8
+    pin_memory: True
+    shuffle: False
 
 model:
-  type: BaselineZERO
+  type: ModalSpecZERO
   args:
     embedding_dim: 512
-    num_heads: 2
+    num_heads: 8
     ff_hidden_dim: 1024
-    learnable_token_num: 10
-    dropout: 0
-    num_block: 2
+    learnable_token_num: 30
+    dropout: 0.1
+    num_block: 16
     max_seq_len: 200
     temperature: 0.1
+    loss_configs: [
+      {"type": "info_nce", "weight": 1.0}
+    ]
 
-optimizer:
-  type: Adam
-  args:
-    lr: 0.0001
-
-lr_scheduler:
-  type: CosineAnnealingLR
-  args:
-    T_max: 4000
-
-loss:
-  type: CombinedLoss
-  args:
-    temperature: 0.1  
-    v_d_weight: 1
-    a_d_weight: 1
-    va_d_weight: 1
-    v_g_weight: 1
-    a_g_weight: 1 
-    va_g_weight: 1
-    inmodel_weight: 1
-
-
-trainer:
-  args:
-    use_check_point: false
-    check_point: ''
-    epochs: 100000
+training_params:
+  epochs: 300
+  learning_rate: 0.001
+  t_max: 10
+  model_save_root_path: model_saves
